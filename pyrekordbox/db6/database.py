@@ -1822,7 +1822,7 @@ class Rekordbox6Database:
         root = self.get_anlz_dir(content)
         return read_anlz_files(root)
 
-    def update_content_path(self, content, path, save=True, check_path=True):
+    def update_content_path(self, content, path, save=True, check_path=True, commit=True):
         """Update the file path of a track in the Rekordbox v6 database.
 
         This changes the `FolderPath` entry in the ``DjmdContent`` table and the
@@ -1855,7 +1855,7 @@ class Rekordbox6Database:
         Updating the path changes the database entry
 
         >>> new_path = "C:/Music/PioneerDJ/Sampler/PRESET ONESHOT/NOISE.wav"
-        >>> db.update_content_path(cont, new_path)
+        >>> db.update_content_path(cont, path)
         >>> cont.FolderPath
         C:/Music/PioneerDJ/Sampler/PRESET ONESHOT/NOISE.wav
 
@@ -1889,15 +1889,23 @@ class Rekordbox6Database:
         logger.debug("Updating database file path: %s", path)
         content.FolderPath = path
 
+        # Update the OrgFolderPath column with the new path if the column matches the old_path variable
+        org_folder_path = content.OrgFolderPath
+        if org_folder_path == old_path:
+            content.OrgFolderPath = path
+
         if save:
             logger.debug("Saving changes")
             # Save ANLZ files
             for anlz_path, anlz in anlz_files.items():
                 anlz.save(anlz_path)
+
+        if commit:
             # Commit database changes
+            logger.debug("Committing changes to the database")
             self.commit()
 
-    def update_content_filename(self, content, name, save=True, check_path=True):
+    def update_content_filename(self, content, name, save=True, check_path=True, commit=True):
         """Update the file name of a track in the Rekordbox v6 database.
 
         This changes the `FolderPath` entry in the ``DjmdContent`` table and the
@@ -1948,7 +1956,8 @@ class Rekordbox6Database:
         ext = old_path.suffix
         new_path = old_path.parent / name
         new_path = new_path.with_suffix(ext)
-        self.update_content_path(content, new_path, save, check_path)
+        content.FileNameL = name # Make a change to the FileNameL column
+        self.update_content_path(content, new_path, save, check_path, commit=commit)
 
     def to_dict(self, verbose=False):
         """Convert the database to a dictionary.
