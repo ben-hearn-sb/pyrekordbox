@@ -8,17 +8,23 @@ Contains all the path and settings handling of the Rekordbox installation(s) on
 the users machine.
 """
 
+import base64
+import json
+import logging
 import os
 import re
 import sys
-import logging
-import base64
-import blowfish
-import json
-import packaging.version
+import textwrap
+import time
 import xml.etree.cElementTree as xml
 from pathlib import Path
 from typing import Union
+
+import blowfish
+import frida
+import packaging.version
+
+from .utils import get_rekordbox_pid
 
 logger = logging.getLogger(__name__)
 
@@ -357,20 +363,67 @@ def _get_rb5_config(
 
 def _extract_pw(pioneer_install_dir: Path) -> str:  # pragma: no cover
     """Extract the password for decrypting the Rekordbox 6 database key."""
-    try:
-        asar_data = read_rekordbox6_asar(pioneer_install_dir)
-    except FileNotFoundError as e:
-        logger.warning("Could not extract password: %s", e)
-        return ""
 
+    asar_data = read_rekordbox6_asar(pioneer_install_dir)
     match_result = re.search('pass: ".(.*?)"', asar_data)
     if match_result is None:
-        logging.warning("Incompatible rekordbox 6 database: Could not retrieve db-key.")
-        pw = ""
-    else:
-        match = match_result.group(0)
-        pw = match.replace("pass: ", "").strip('"')
+        raise RuntimeError("Could not read `app.asar` file.")
+    match = match_result.group(0)
+    pw = match.replace("pass: ", "").strip('"')
     return pw
+
+
+class KeyExtractor:
+    """Extracts the Rekordbox database key using code injection.
+
+    This method works by injecting code into the Rekordbox process and intercepting the
+    call to unlock the database. Works for any Rekordbox version.
+    """
+
+    # fmt: off
+    SCRIPT = textwrap.dedent("""
+    var sqlite3_key = Module.findExportByName(null, 'sqlite3_key');
+
+    Interceptor.attach(sqlite3_key, {
+        onEnter: function(args) {
+            var size = args[2].toInt32();
+            var key = args[1].readUtf8String(size);
+            send('sqlite3_key: ' + key);
+        }
+    });
+    """)
+    # fmt: on
+
+    def __init__(self, rekordbox_executable):
+        self.executable = str(rekordbox_executable)
+        self.key = ""
+
+    def on_message(self, message, data):
+        payload = message["payload"]
+        if payload.startswith("sqlite3_key"):
+            self.key = payload.split(": ")[1]
+
+    def run(self):
+        pid = get_rekordbox_pid()
+        if pid:
+            raise RuntimeError(
+                "Rekordbox is running. "
+                "Please close Rekordbox before running the `KeyExtractor`."
+            )
+        # Spawn Rekordbox process and attach to it
+        pid = frida.spawn(self.executable)
+        frida.resume(pid)
+        session = frida.attach(pid)
+        script = session.create_script(self.SCRIPT)
+        script.on("message", self.on_message)
+        script.load()
+        # Wait for key to be extracted
+        while not self.key:
+            time.sleep(0.1)
+        # Kill Rekordbox process
+        frida.kill(pid)
+
+        return self.key
 
 
 def write_db6_key_cache(key: str) -> None:  # pragma: no cover
@@ -424,6 +477,7 @@ def _get_rb6_config(
     cache_version = 0
     pw, dp = "", ""
     if _cache_file.exists():  # pragma: no cover
+        logger.debug("Found cache file %s", _cache_file)
         # Read cache file
         with open(_cache_file, "r") as fh:
             text = fh.read()
@@ -435,23 +489,64 @@ def _get_rb6_config(
         if cache_version == 1:
             # Cache file introduced in pyrekordbox 0.1.6 contains only the password
             pw = lines[0]
+            logger.debug("Found pw in cache file")
         elif cache_version == 2:
             # Cache file introduced in pyrekordbox 0.1.7 contains version and db key
             dp = lines[1].split(":")[1].strip()
+            logger.debug("Found dp in cache file")
         else:
             raise ValueError(f"Invalid cache version: {cache_version}")
+    else:
+        logger.debug("No cache file found")
 
     if cache_version < _cache_file_version:  # pragma: no cover
         # Update cache file
         if not pw:
             logger.debug("Extracting pw")
-            pw = _extract_pw(conf["install_dir"])
-        if not dp and pw:
-            cipher = blowfish.Cipher(pw.encode())
-            dp = base64.standard_b64decode(opts["dp"])
-            dp = b"".join(cipher.decrypt_ecb(dp)).decode()
+            try:
+                pw = _extract_pw(conf["install_dir"])
+                logger.debug("Extracted pw from 'app.asar'")
+            except (FileNotFoundError, RuntimeError):
+                logger.debug("Could not extract pw from 'app.asar'")
+                pw = ""
+
+        if not dp:
+            if pw:
+                cipher = blowfish.Cipher(pw.encode())
+                dp = base64.standard_b64decode(opts["dp"])
+                dp = b"".join(cipher.decrypt_ecb(dp)).decode()
+                logger.debug("Unlocked dp from pw: %s", dp)
+            else:
+                if sys.platform == "win32":
+                    executable = conf["install_dir"] / "rekordbox.exe"
+                elif sys.platform == "darwin":
+                    executable = (
+                        conf["install_dir"] / "Contents" / "MacOS" / "rekordbox"
+                    )
+                else:
+                    # Linux: not supported
+                    logger.warning(f"OS {sys.platform} not supported!")
+                    executable = Path("")
+
+                if not executable.exists():
+                    logger.warning(f"Could not find Rekordbox executable: {executable}")
+                else:
+                    extractor = KeyExtractor(executable)
+                    try:
+                        dp = extractor.run()
+                        logger.debug("Extracted dp from Rekordbox process")
+                    except Exception as e:
+                        logger.info(f"`KeyExtractor` failed: {e}")
+
         if dp:
+            logger.debug("Writing dp to cache file")
             write_db6_key_cache(dp)
+        else:
+            logging.warning(
+                "Could not retrieve db-key or read it from cache file,"
+                "use the CLI to download it from external sources: "
+                "`python -m pyrekordbox download-key`"
+            )
 
     # Add database key to config if found
     if dp:
@@ -595,10 +690,6 @@ def update_config(
         logger.info(e)
 
 
-# Fill the pyrekordbox-configuration
-update_config()
-
-
 def get_config(section: str, key: str = None):
     """Gets a section or value of the pyrekordbox configuration.
 
@@ -615,6 +706,10 @@ def get_config(section: str, key: str = None):
     data : str or Path or dict
         The data of a section or a specific configuration value.
     """
+    # Update config if not done yet
+    if not __config__[section]:
+        update_config()
+
     conf = __config__[section]
     if key is None:
         return conf
@@ -623,9 +718,9 @@ def get_config(section: str, key: str = None):
 
 def pformat_config(indent: str = "   ", hw: int = 14, delim: str = " = ") -> str:
     """Returns a formatted string of the pyrekordbox configurations."""
-    pioneer = __config__["pioneer"]
-    rb5 = __config__["rekordbox5"]
-    rb6 = __config__["rekordbox6"]
+    pioneer = get_config("pioneer")
+    rb5 = get_config("rekordbox5")
+    rb6 = get_config("rekordbox6")
 
     lines = ["Pioneer:"]
     lines += [f"{indent}{k + delim:<{hw}} {pioneer[k]}" for k in sorted(pioneer.keys())]

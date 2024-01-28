@@ -7,16 +7,61 @@
 import math
 import struct
 import numpy as np
+from enum import IntEnum
 from datetime import datetime
 from sqlalchemy import Column, Integer, VARCHAR, BigInteger, SmallInteger, Text, Float
 from sqlalchemy import ForeignKey, TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, relationship, backref, mapped_column, Mapped
+from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.inspection import inspect
 from .registry import RekordboxAgentRegistry
 
 __all__ = [
+    "TABLES",
+    "PlaylistType",
     "StatsTime",
     "StatsFull",
+    "AgentRegistry",
+    "CloudAgentRegistry",
+    "ContentActiveCensor",
+    "ContentCue",
+    "ContentFile",
+    "DjmdActiveCensor",
+    "DjmdAlbum",
+    "DjmdArtist",
+    "DjmdCategory",
+    "DjmdColor",
+    "DjmdContent",
+    "DjmdCue",
+    "DjmdDevice",
+    "DjmdGenre",
+    "DjmdHistory",
+    "DjmdHotCueBanklist",
+    "DjmdKey",
+    "DjmdLabel",
+    "DjmdMenuItems",
+    "DjmdMixerParam",
+    "DjmdMyTag",
+    "DjmdPlaylist",
+    "DjmdProperty",
+    "DjmdRelatedTracks",
+    "DjmdSampler",
+    "DjmdSongHistory",
+    "DjmdSongHotCueBanklist",
+    "DjmdSongMyTag",
+    "DjmdSongPlaylist",
+    "DjmdSongRelatedTracks",
+    "DjmdSongSampler",
+    "DjmdSongTagList",
+    "DjmdSort",
+    "HotCueBanklistCue",
+    "ImageFile",
+    "SettingFile",
+    "UuidIDMap",
+]
+
+
+TABLES = [
     "AgentRegistry",
     "CloudAgentRegistry",
     "ContentActiveCensor",
@@ -86,6 +131,12 @@ class DateTime(TypeDecorator):
                 dt = datetime.fromisoformat(datestr)
             return dt
         return None
+
+
+class PlaylistType(IntEnum):
+    PLAYLIST = 0
+    FOLDER = 1
+    SMART_PLAYLIST = 4
 
 
 # -- Base- and Mixin classes -----------------------------------------------------------
@@ -404,7 +455,9 @@ class DjmdActiveCensor(Base, StatsFull):
     ContentUUID: Mapped[str] = mapped_column(VARCHAR(255), default=None)
     """The UUID of the :class:`DjmdContent` entry this censor belongs to."""
 
-    Content = relationship("DjmdContent")
+    Content = relationship(
+        "DjmdContent", foreign_keys=ContentID, back_populates="ActiveCensors"
+    )
     """The content entry this censor belongs to (links to :class:`DjmdContent`)."""
 
 
@@ -435,6 +488,8 @@ class DjmdAlbum(Base, StatsFull):
 
     AlbumArtist = relationship("DjmdArtist")
     """The artist entry of the artist of this album (links to :class:`DjmdArtist`)."""
+    AlbumArtistName = association_proxy("AlbumArtist", "Name")
+    """The name of the album artist (:class:`DjmdArtist`) of the track."""
 
     def __repr__(self):
         s = f"{self.ID: <10} Name={self.Name}"
@@ -700,82 +755,47 @@ class DjmdContent(Base, StatsFull):
     """The color entry of the track (links to :class:`DjmdColor`)."""
     Composer = relationship("DjmdArtist", foreign_keys=ComposerID)
     """The composer entry of the track (links to :class:`DjmdArtist`)."""
+    AlbumArtist = association_proxy("Album", "AlbumArtist")
+    """The album artist entry of the track (links to :class:`DjmdArtist`)."""
+    MyTags = relationship("DjmdSongMyTag", back_populates="Content")
+    """The my tags of the track (links to :class:`DjmdSongMyTag`)."""
+    Cues = relationship(
+        "DjmdCue", foreign_keys="DjmdCue.ContentID", back_populates="Content"
+    )
+    """The cues of the track (links to :class:`DjmdCue`)."""
+    ActiveCensors = relationship("DjmdActiveCensor", back_populates="Content")
+    """The active censors of the track (links to :class:`DjmdActiveCensor`)."""
+    MixerParams = relationship("DjmdMixerParam", back_populates="Content")
+    """The mixer parameters of the track (links to :class:`DjmdMixerParam`)."""
+
+    ArtistName = association_proxy("Artist", "Name")
+    """The name of the artist (:class:`DjmdArtist`) of the track."""
+    AlbumName = association_proxy("Album", "Name")
+    """The name of the album (:class:`DjmdAlbum`) of the track."""
+    GenreName = association_proxy("Genre", "Name")
+    """The name of the genre (:class:`DjmdArtist`) of the track."""
+    RemixerName = association_proxy("Remixer", "Name")
+    """The name of the remixer (:class:`DjmdArtist`) of the track."""
+    LabelName = association_proxy("Label", "Name")
+    """The name of the label (:class:`DjmdLabel`) of the track."""
+    OrgArtistName = association_proxy("OrgArtist", "Name")
+    """The name of the original artist (:class:`DjmdArtist`) of the track."""
+    KeyName = association_proxy("Key", "ScaleName")
+    """The name of the key (:class:`DjmdKey`) of the track."""
+    ColorName = association_proxy("Color", "Commnt")
+    """The name of the color (:class:`DjmdColor`) of the track."""
+    ComposerName = association_proxy("Composer", "Name")
+    """The name of the composer (:class:`DjmdArtist`) of the track."""
+    AlbumArtistName = association_proxy("Album", "AlbumArtistName")
+    """The name of the album artist (:class:`DjmdArtist`) of the track."""
+    MyTagNames = association_proxy("MyTags", "MyTagName")
+    """The names of the my tags (:class:`DjmdSongMyTag`) of the track."""
+    MyTagIDs = association_proxy("MyTags", "MyTagID")
+    """The IDs of the my tags (:class:`DjmdSongMyTag`) of the track."""
 
     def __repr__(self):
         s = f"{self.ID: <10} Title={self.Title}"
         return f"<{self.__class__.__name__}({s})>"
-
-    @property
-    def ArtistName(self) -> str:
-        """The name of the artist (:class:`DjmdArtist`) of the track."""
-        try:
-            return self.Artist.Name
-        except AttributeError:
-            return ""
-
-    @property
-    def AlbumName(self) -> str:
-        """The name of the album (:class:`DjmdAlbum`) of the track."""
-        try:
-            return self.Album.Name
-        except AttributeError:
-            return ""
-
-    @property
-    def GenreName(self) -> str:
-        """The name of the genre (:class:`DjmdArtist`) of the track."""
-        try:
-            return self.Genre.Name
-        except AttributeError:
-            return ""
-
-    @property
-    def RemixerName(self) -> str:
-        """The name of the remixer (:class:`DjmdArtist`) of the track."""
-        try:
-            return self.Remixer.Name
-        except AttributeError:
-            return ""
-
-    @property
-    def LabelName(self) -> str:
-        """The name of the label (:class:`DjmdLabel`) of the track."""
-        try:
-            return self.Label.Name
-        except AttributeError:
-            return ""
-
-    @property
-    def OrgArtistName(self) -> str:
-        """The name of the original artist (:class:`DjmdArtist`) of the track."""
-        try:
-            return self.OrgArtist.Name
-        except AttributeError:
-            return ""
-
-    @property
-    def KeyName(self) -> str:
-        """The name of the key (:class:`DjmdKey`) of the track."""
-        try:
-            return self.Key.ScaleName
-        except AttributeError:
-            return ""
-
-    @property
-    def ColorName(self) -> str:
-        """The name of the color (:class:`DjmdColor`) of the track."""
-        try:
-            return self.Color.Commnt
-        except AttributeError:
-            return ""
-
-    @property
-    def ComposerName(self) -> str:
-        """The name of the composer (:class:`DjmdArtist`) of the track."""
-        try:
-            return self.Composer.Name
-        except AttributeError:
-            return ""
 
 
 class DjmdCue(Base, StatsFull):
@@ -833,8 +853,16 @@ class DjmdCue(Base, StatsFull):
     )
     """The UUID of the content (:class:`DjmdContent`) containing the cue point."""
 
-    Content = relationship("DjmdContent", foreign_keys=ContentID)
+    Content = relationship("DjmdContent", foreign_keys=ContentID, back_populates="Cues")
     """The content entry of the cue point (links to :class:`DjmdContent`)."""
+
+    @property
+    def is_memory_cue(self):
+        return self.Kind == 0
+
+    @property
+    def is_hot_cue(self):
+        return self.Kind > 0
 
 
 class DjmdDevice(Base, StatsFull):
@@ -1117,7 +1145,7 @@ class DjmdMixerParam(Base, StatsFull):
     PeakLow: Mapped[int] = mapped_column(Integer, default=None)
     """The low peak of the mixer parameter."""
 
-    Content = relationship("DjmdContent")
+    Content = relationship("DjmdContent", back_populates="MixerParams")
     """The content this mixer parameters belong to (links to :class:`DjmdContent`)."""
 
     @staticmethod
@@ -1231,8 +1259,11 @@ class DjmdSongMyTag(Base, StatsFull):
 
     MyTag = relationship("DjmdMyTag", back_populates="MyTags")
     """The My-Tag list this item belongs to (links to :class:`DjmdMyTag`)."""
-    Content = relationship("DjmdContent")
+    Content = relationship("DjmdContent", back_populates="MyTags")
     """The content this item belongs to (links to :class:`DjmdContent`)."""
+
+    MyTagName = association_proxy("MyTag", "Name")
+    """The name of the My-Tag item (:class:`DjmdMyTag`)."""
 
 
 class DjmdPlaylist(Base, StatsFull):
@@ -1275,6 +1306,18 @@ class DjmdPlaylist(Base, StatsFull):
     """The child playlists of the playlist (links to :class:`DjmdPlaylist`).
     Backrefs to the parent playlist via :attr:`Parent`.
     """
+
+    @property
+    def is_playlist(self):
+        return self.Attribute == PlaylistType.PLAYLIST
+
+    @property
+    def is_folder(self):
+        return self.Attribute == PlaylistType.FOLDER
+
+    @property
+    def is_smart_playlist(self):
+        return self.Attribute == PlaylistType.SMART_PLAYLIST
 
     def __repr__(self):
         s = f"{self.ID: <2} Name={self.Name}"

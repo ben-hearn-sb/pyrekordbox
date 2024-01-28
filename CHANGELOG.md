@@ -1,10 +1,80 @@
 # What's New
 
-<a name="unreleased"></a>
-## [Unreleased]
+<a name="v0.3.2"></a>
+## [v0.3.2] - 2024-01-05
+
+This release fixes smart-playlist related bugs and improves the 
+database table relationships.
+
+### New Features
+
+- **db:** **Add method for creating smart playlists**  
+  This will set the ID in the smart list to the newly created playlist ID before generating the XML string
 
 ### Improvements/Bug Fixes
 
+- **db:** **add missing UUID entries**  
+  The UUID was not set when creating the following db entries:
+  - album
+  - artist
+  - genre
+  - label
+- **db:** **add missing relationships in `DjmdContent`**  
+  Linked tables and corresponding relationships:
+  - `DjmdCue`: `Cues`
+  - `DjmdSongMyTag`: `MyTags`
+  - `DjmdActiveCensor`: `ActiveCensors`
+  - `DjmdMixerParam`: `MixerParams`
+- **db:** **add My-Tag names association to the `DjmdContent` table**  
+  It is now possible to get a list of the corresponding My-tag names from the `DjmdContent` instance.
+- **db:** **add album artist association to the `DjmdAlbum` and `DjmdContent` tables**  
+  It is now possible to get the album artist instance or name directly from the `DjmdContent` instance.
+- **db:** **fix smart list filter bugs ([#110](https://github.com/dylanljones/pyrekordbox/discussions/110))**  
+
+### Documentation
+
+- **db:** **fix `Kind` notes in `DjmdCue` table**  
+
+
+<a name="v0.3.1"></a>
+## [v0.3.1] - 2023-12-28
+
+This release improves the Rekordbox v6 database key extraction and 
+adds a new handler for smart playlists.
+
+### New Features
+
+- **add method to return the contents of a playlist in the RBv6 db directly**  
+  The database can now be queried directly for the contents contained in a playlist. 
+  This works for regular playlists as well as for smart playlists.
+  The full `DjmdContent` instances of specific columns can be returned.
+- **add RBv6 smart playlist handler**  
+  Add a handler for the smart playlists of Rekordbox. The conditions are stored as an 
+  XML string. The smart playlist handler supports parsing and writing the XML string.
+- **add DB key extraction method for newer Rekordbox versions ([#97](https://github.com/dylanljones/pyrekordbox/discussions/97)).**  
+  The key can now also be extracted with newer Rekordbox versions.
+  `frida` is used to inject code to intercept the key when the DB is opened.
+
+### Improvements/Bug Fixes
+
+- **populate configuration just-in-time**  
+  Previously the config was populated when importing `pyrekordbox`. 
+  Now the config is updated the first time it is used.
+- **use association proxies in `DjmdContent` table**  
+  This makes it possible to filter queries using these associations, 
+  for example `DjmdContent.ArtistName`
+- **add Playlist type enums and attributes**  
+
+
+<a name="0.3.0"></a>
+## [0.3.0] - 2023-12-12
+
+This release fixes bugs and imrpoves error handling.
+
+### Improvements/Bug Fixes
+
+- **The `bank` field of PSSI ANLZ tag can also have a value of 0 ([#108](https://github.com/dylanljones/pyrekordbox/issues/108))**  
+  This fixes an issue where the XOR mask was applied to un-garbled PSSI tags.
 - **check if RBv6 db key seems valid ([#105](https://github.com/dylanljones/pyrekordbox/issues/105))**  
   Check the key if it is passed manually to the db handler and raise an exception 
   if it doesn't look valid. Only the first few characters are checked.
@@ -500,7 +570,10 @@ This release contains documentation fixes.
 - **add missing djmd tables to `master.db` database documentation**
 
 
-[Unreleased]: https://github.com/dylanljones/pyrekordbox/compare/0.2.3...HEAD
+[Unreleased]: https://github.com/dylanljones/pyrekordbox/compare/v0.3.2...HEAD
+[v0.3.2]: https://github.com/dylanljones/pyrekordbox/compare/v0.3.1...v0.3.2
+[v0.3.1]: https://github.com/dylanljones/pyrekordbox/compare/0.3.0...v0.3.1
+[0.3.0]: https://github.com/dylanljones/pyrekordbox/compare/0.2.3...0.3.0
 [0.2.3]: https://github.com/dylanljones/pyrekordbox/compare/0.2.2...0.2.3
 [0.2.2]: https://github.com/dylanljones/pyrekordbox/compare/0.2.1...0.2.2
 [0.2.1]: https://github.com/dylanljones/pyrekordbox/compare/0.2.0...0.2.1

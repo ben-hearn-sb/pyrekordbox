@@ -41,5 +41,5 @@ from .tables import (
     SettingFile,
     UuidIDMap,
 )
-
+from .smartlist import SmartList
 from .database import Rekordbox6Database, open_rekordbox_database
